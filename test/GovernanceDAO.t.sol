@@ -8,18 +8,19 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 contract GovernanceDAOTest is Test {
     MockERC20 token;
     GovernanceDAO dao;
+    address alice;
 
     uint256 constant RATE = 10;
     uint256 constant PERIOD = 7 days;
 
-    /* SetUp() parte da un contratto pulito */
+    /* SetUp() starts from a fresh new contract */
     function setUp() public {
         token = new MockERC20(18);
         dao = new GovernanceDAO(address(token), RATE, PERIOD);
-        address alice = makeAddr("alice");
+        alice = makeAddr("alice");
     }
 
-    /* Test verifica che i valori salvati coincidano con quelli passati */
+    /* Test checks if values are equal to the passed ones  */
     function test_Constructor_StoresConfig() public view {
         assertEq(dao.owner(), address(this));
         assertEq(address(dao.token()), address(token));
@@ -31,14 +32,14 @@ contract GovernanceDAOTest is Test {
         assertEq(dao.proposalCount(), 0);
     }
 
-    /* Test su token con 6 decimali */
+    /* Test on 6 decimals token */
     function test_Constructor_TokenUnitWith6Decimals() public {
         MockERC20 usdc = new MockERC20(6);
         GovernanceDAO dao6 = new GovernanceDAO(address(usdc), RATE, PERIOD);
         assertEq(dao6.tokenUnit(), 1e6);
     }
 
-    /* Test sui revert */
+    /* Test for revert on rate, address token 0 and period */
     function test_Constructor_RevertsOnZeroRate() public {
         vm.expectRevert(
             abi.encodeWithSelector(GovernanceDAO.InvalidConstructorArguments.selector, address(token), 0, PERIOD)
@@ -58,12 +59,45 @@ contract GovernanceDAOTest is Test {
         new GovernanceDAO(address(token), RATE, 0);
     }
 
-    /* Test per chiamare una funzione da un address differente da quello del contratto */
-    /* --- Non ancora implementato:
+    /* buyShares tests for low amount, exact amount and rounded up cost */
+    function test_BuyShares_RevertsOnLowAmount() public {
+        uint256 amount = 1;
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.AmountTooLow.selector, amount));
+        dao.buyShares(amount);
+    }
 
-    function test_CloseSales_RevertsIfNotOwner() public {
-        vm.prank(alice); // PROSSIMA chiamata ha msg.sender = alice
-        vm.expectRevert(); // ci aspettiamo che fallisca
-        dao.closeSales();
-    } --- */
+    function test_BuyShares_ExactAmount() public {
+        token.mint(alice, 1e18); /* MockERC20 can mint tokens */
+        vm.prank(alice); /* NEXT call has msg.sender = alice */
+        token.approve(address(dao), 1e18);
+        vm.prank(alice);
+        dao.buyShares(1e18);
+        assertEq(dao.shares(alice), 10); /* Mapping registered 10 shares for alice? */
+        assertEq(dao.totalShares(), 10); /* totalShares is updated? */
+        assertEq(token.balanceOf(address(dao)), 1e18); /* is contract's balance updated? */
+        assertEq(token.balanceOf(alice), 0); /* is alice's balance updated? */
+    }
+
+    function test_BuyShares_RoundsCostUp() public {
+        MockERC20 usdc = new MockERC20(6); /* tokenUnit = 1e6 */
+        GovernanceDAO dao6 = new GovernanceDAO(address(usdc), 3, PERIOD);
+
+        usdc.mint(alice, 1_500_000); /* Create alice balance 1_500_000 base units (1,5 Token) */
+
+        /*
+            Expected values:
+            shares = 1_500_000 * 3 / 1e6 = 4,5 rounded 4
+            cost = ceil(4 * 1e6 / 3) = 1_333_334
+        */
+
+        vm.prank(alice);
+        usdc.approve(address(dao6), 1_500_000);
+        vm.prank(alice);
+        dao6.buyShares(1_500_000);
+
+        assertEq(dao6.shares(alice), 4);
+        assertEq(dao6.totalShares(), 4);
+        assertEq(usdc.balanceOf(address(dao6)), 1_333_334);
+        assertEq(usdc.balanceOf(alice), 166_666);
+    }
 }
