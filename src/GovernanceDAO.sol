@@ -49,6 +49,8 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
     // Errors
     error InvalidConstructorArguments(address _token, uint256 _exchangeRate, uint256 _votingPeriod);
     error AmountTooLow(uint256 _amount);
+    error SaleIsClosed();
+    error SaleIsAlreadyClosed();
 
     // Events
     event SharesPurchased(address indexed buyer, uint256 sharesBought, uint256 cost);
@@ -69,6 +71,9 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
 
     function buyShares(uint256 _amount) external nonReentrant {
         uint256 newShares = _amount * exchangeRate / tokenUnit;
+        if (salesOpen == false) {
+            revert SaleIsClosed();
+        }
         if (newShares == 0) {
             revert AmountTooLow(_amount);
         }
@@ -81,5 +86,22 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         token.safeTransferFrom(msg.sender, address(this), cost);
 
         emit SharesPurchased(msg.sender, newShares, cost);
+    }
+
+    function closeSales() public onlyOwner {
+        if (salesOpen == false) {
+            revert SaleIsAlreadyClosed();
+        }
+        salesOpen = false;
+
+        emit SalesClosed();
+    }
+
+    function currentStage() public view returns (string memory) {
+        if (salesOpen == false) {
+            return "Sales are closed";
+        } else {
+            return "Sales are open";
+        }
     }
 }

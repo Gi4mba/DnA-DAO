@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {GovernanceDAO} from "../src/GovernanceDAO.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract GovernanceDAOTest is Test {
     MockERC20 token;
@@ -12,6 +13,8 @@ contract GovernanceDAOTest is Test {
 
     uint256 constant RATE = 10;
     uint256 constant PERIOD = 7 days;
+
+    event SalesClosed();
 
     /* SetUp() starts from a fresh new contract */
     function setUp() public {
@@ -99,5 +102,38 @@ contract GovernanceDAOTest is Test {
         assertEq(dao6.totalShares(), 4);
         assertEq(usdc.balanceOf(address(dao6)), 1_333_334);
         assertEq(usdc.balanceOf(alice), 166_666);
+    }
+
+    function test_CloseSales_UnauthorizedAccount() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice)
+        );
+        vm.prank(alice);
+        dao.closeSales();
+    }
+
+    function test_CloseSales_FlagChange() public {
+        assertTrue(dao.salesOpen());
+        dao.closeSales();
+        assertFalse(dao.salesOpen());
+    }
+
+    function test_CloseSales_EmitEvent() public {
+        vm.expectEmit(address(dao));
+        emit SalesClosed();
+        dao.closeSales();
+    }
+
+    function test_CloseSales_SaleIsAlreadyClosed() public {
+        dao.closeSales();
+        vm.expectRevert(GovernanceDAO.SaleIsAlreadyClosed.selector);
+        dao.closeSales();
+    }
+
+    function test_BuyShares_SaleIsClosed() public {
+        dao.closeSales();
+        vm.prank(alice);
+        vm.expectRevert(GovernanceDAO.SaleIsClosed.selector);
+        dao.buyShares(1e18);
     }
 }
