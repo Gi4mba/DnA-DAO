@@ -5,9 +5,11 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract GovernanceDAO is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20Metadata;
+    using SafeCast for uint256;
     // Types
     enum VoteType {
         For,
@@ -27,6 +29,7 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         uint256 forShares;
         uint256 againstShares;
         uint256 abstainShares;
+        string title;
         string description;
     }
 
@@ -51,11 +54,17 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
     error AmountTooLow(uint256 _amount);
     error SaleIsClosed();
     error SaleIsAlreadyClosed();
+    error SalesStageNotEnded();
+    error UserMustBeShareholder(uint256 shares);
+    error TitleIsEmpty(string _title);
+    error DescriptionIsEmpty(string _description);
 
     // Events
     event SharesPurchased(address indexed buyer, uint256 sharesBought, uint256 cost);
     event SalesClosed();
-    event ProposalCreated(uint256 indexed id, address indexed proposer, uint64 endtime, string description);
+    event ProposalCreated(
+        uint256 indexed id, address indexed proposer, uint64 endTime, string title, string description
+    );
     event Voted(uint256 indexed id, address indexed voter, VoteType choice, uint256 weight);
 
     constructor(address _token, uint256 _exchangeRate, uint256 _votingPeriod) Ownable(msg.sender) {
@@ -103,5 +112,40 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         } else {
             return "Sales are open";
         }
+    }
+
+    function createProposal(string calldata _title, string calldata _description) external {
+        if (salesOpen != false) {
+            revert SalesStageNotEnded();
+        }
+        if (shares[msg.sender] == 0) {
+            revert UserMustBeShareholder(shares[msg.sender]);
+        }
+        /* Converts _title and _description in bytes. Reverts if length's empty ("") */
+        if (bytes(_title).length == 0) {
+            revert TitleIsEmpty(_title);
+        }
+        if (bytes(_description).length == 0) {
+            revert DescriptionIsEmpty(_description);
+        }
+
+        /* Converts expression in uint64, packing with proposer. Reduce gas per Proposal */
+        uint64 _endTime = (block.timestamp + votingPeriod).toUint64();
+        proposalCount++;
+
+        /* Assignation: `Type Position Name = Constructor({value})` */
+        Proposal memory newProposal = Proposal({
+            proposer: msg.sender,
+            endTime: _endTime,
+            forShares: 0,
+            againstShares: 0,
+            abstainShares: 0,
+            title: _title,
+            description: _description
+        });
+        /* Calls mapping and saves newProposal to proposalCount slot */
+        _proposals[proposalCount] = newProposal;
+
+        emit ProposalCreated(proposalCount, msg.sender, _endTime, _title, _description);
     }
 }

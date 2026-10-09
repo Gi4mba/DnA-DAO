@@ -10,17 +10,30 @@ contract GovernanceDAOTest is Test {
     MockERC20 token;
     GovernanceDAO dao;
     address alice;
+    address bob;
 
     uint256 constant RATE = 10;
     uint256 constant PERIOD = 7 days;
 
     event SalesClosed();
+    event ProposalCreated(
+        uint256 indexed id, address indexed proposer, uint64 endTime, string title, string description
+    );
 
     /* SetUp() starts from a fresh new contract */
     function setUp() public {
         token = new MockERC20(18);
         dao = new GovernanceDAO(address(token), RATE, PERIOD);
         alice = makeAddr("alice");
+        bob = makeAddr("bob");
+    }
+
+    function mintAndBuy(address caller) internal {
+        token.mint(caller, 1e18); /* MockERC20 can mint tokens */
+        vm.prank(caller); /* NEXT call has msg.sender = alice */
+        token.approve(address(dao), 1e18);
+        vm.prank(caller);
+        dao.buyShares(1e18);
     }
 
     /* Test checks if values are equal to the passed ones  */
@@ -70,11 +83,7 @@ contract GovernanceDAOTest is Test {
     }
 
     function test_BuyShares_ExactAmount() public {
-        token.mint(alice, 1e18); /* MockERC20 can mint tokens */
-        vm.prank(alice); /* NEXT call has msg.sender = alice */
-        token.approve(address(dao), 1e18);
-        vm.prank(alice);
-        dao.buyShares(1e18);
+        mintAndBuy(alice);
         assertEq(dao.shares(alice), 10); /* Mapping registered 10 shares for alice? */
         assertEq(dao.totalShares(), 10); /* totalShares is updated? */
         assertEq(token.balanceOf(address(dao)), 1e18); /* is contract's balance updated? */
@@ -105,9 +114,7 @@ contract GovernanceDAOTest is Test {
     }
 
     function test_CloseSales_UnauthorizedAccount() public {
-        vm.expectRevert(
-            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice)
-        );
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         vm.prank(alice);
         dao.closeSales();
     }
@@ -135,5 +142,63 @@ contract GovernanceDAOTest is Test {
         vm.prank(alice);
         vm.expectRevert(GovernanceDAO.SaleIsClosed.selector);
         dao.buyShares(1e18);
+    }
+
+    function test_CreateProposal_ProposalCreated() public {
+        mintAndBuy(alice);
+
+        dao.closeSales();
+
+        /* Expected indipendent value: blocktime + PERIOD */
+        uint64 expectedEnd = uint64(block.timestamp + PERIOD);
+
+        /* 1) Expected event: 2 indexed topics (true), compare data (true) */
+        vm.expectEmit(true, true, false, true);
+        /* 2) Declare how event is expected to emit */
+        emit ProposalCreated(1, alice, expectedEnd, "Hello", "world!");
+
+        /* 3) Alice makes the real call */
+        vm.prank(alice);
+        dao.createProposal("Hello", "world!");
+
+        assertEq(dao.proposalCount(), 1);
+    }
+
+    function test_CreateProposal_SalesNotClosed() public {
+        mintAndBuy(alice);
+
+        vm.expectRevert(GovernanceDAO.SalesStageNotEnded.selector);
+        vm.prank(alice);
+        dao.createProposal("Hello", "world!");
+    }
+
+    function test_CreateProposal_CallerHasNoShares() public {
+        dao.closeSales();
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.UserMustBeShareholder.selector, 0));
+        vm.prank(alice);
+        dao.createProposal("Hello", "world!");
+    }
+
+    function test_CreateProposal_DifferentIdsForSubsequentProposals() public {
+        mintAndBuy(alice);
+        mintAndBuy(bob);
+
+        dao.closeSales();
+
+        uint64 expectedEnd = uint64(block.timestamp + PERIOD);
+
+        vm.expectEmit(true, true, false, true);
+        emit ProposalCreated(1, alice, expectedEnd, "Hello", "world!");
+
+        vm.prank(alice);
+        dao.createProposal("Hello", "world!");
+
+        vm.expectEmit(true, true, false, true);
+        emit ProposalCreated(2, bob, expectedEnd, "Test", "just another proposal");
+
+        vm.prank(bob);
+        dao.createProposal("Test", "just another proposal");
+
+        assertEq(dao.proposalCount(), 2);
     }
 }
