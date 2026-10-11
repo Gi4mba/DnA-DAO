@@ -58,6 +58,9 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
     error UserMustBeShareholder(uint256 shares);
     error TitleIsEmpty(string _title);
     error DescriptionIsEmpty(string _description);
+    error InvalidProposalId(uint256 _proposalId);
+    error ProposalAlreadyVoted();
+    error ProposalExpired(uint64 endTime);
 
     // Events
     event SharesPurchased(address indexed buyer, uint256 sharesBought, uint256 cost);
@@ -147,5 +150,36 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         _proposals[proposalCount] = newProposal;
 
         emit ProposalCreated(proposalCount, msg.sender, _endTime, _title, _description);
+    }
+
+    function vote(uint256 _proposalId, VoteType _choice) external {
+        /* salesOpen is set to false since proposals are being created and it's irreversible. Check not required */
+        if (shares[msg.sender] == 0) {
+            revert UserMustBeShareholder(shares[msg.sender]);
+        }
+        if (_proposalId == 0 || _proposalId > proposalCount) {
+            revert InvalidProposalId(_proposalId);
+        }
+        // deadline check is intended: validators can shift block.timestamp only by seconds.
+        // forge-lint: disable-next-line(block-timestamp)
+        if ((block.timestamp) > _proposals[_proposalId].endTime) {
+            revert ProposalExpired(_proposals[_proposalId].endTime);
+        }
+        if (hasVoted[_proposalId][msg.sender]) {
+            revert ProposalAlreadyVoted();
+        }
+
+        hasVoted[_proposalId][msg.sender] = true;
+
+        uint256 callerRawShares = shares[msg.sender];
+        if (_choice == VoteType.For) {
+            _proposals[_proposalId].forShares += callerRawShares;
+        } else if (_choice == VoteType.Against) {
+            _proposals[_proposalId].againstShares += callerRawShares;
+        } else if (_choice == VoteType.Abstain) {
+            _proposals[_proposalId].abstainShares += callerRawShares;
+        }
+
+        emit Voted(_proposalId, msg.sender, _choice, callerRawShares);
     }
 }

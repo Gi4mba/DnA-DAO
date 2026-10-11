@@ -19,6 +19,7 @@ contract GovernanceDAOTest is Test {
     event ProposalCreated(
         uint256 indexed id, address indexed proposer, uint64 endTime, string title, string description
     );
+    event Voted(uint256 indexed id, address indexed voter, GovernanceDAO.VoteType choice, uint256 weight);
 
     /* SetUp() starts from a fresh new contract */
     function setUp() public {
@@ -34,6 +35,14 @@ contract GovernanceDAOTest is Test {
         token.approve(address(dao), 1e18);
         vm.prank(caller);
         dao.buyShares(1e18);
+    }
+
+    function mintBuyAndCreateProposal(address caller) internal {
+        mintAndBuy(caller);
+        dao.closeSales();
+
+        vm.prank(caller);
+        dao.createProposal("Make", "coffee");
     }
 
     /* Test checks if values are equal to the passed ones  */
@@ -189,16 +198,115 @@ contract GovernanceDAOTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit ProposalCreated(1, alice, expectedEnd, "Hello", "world!");
-
         vm.prank(alice);
         dao.createProposal("Hello", "world!");
 
         vm.expectEmit(true, true, false, true);
         emit ProposalCreated(2, bob, expectedEnd, "Test", "just another proposal");
-
         vm.prank(bob);
         dao.createProposal("Test", "just another proposal");
 
         assertEq(dao.proposalCount(), 2);
+    }
+
+    function test_Vote_Success() public {
+        mintBuyAndCreateProposal(alice);
+
+        assertFalse(dao.hasVoted(1, alice));
+
+        vm.expectEmit(true, true, false, true);
+        emit Voted(1, alice, GovernanceDAO.VoteType.For, 10);
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.For);
+
+        assertTrue(dao.hasVoted(1, alice));
+    }
+
+    function test_Vote_RevertsOnZeroShares() public {
+        mintBuyAndCreateProposal(bob);
+
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.UserMustBeShareholder.selector, 0));
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.For);
+    }
+
+    function test_Vote_RevertsOnDoubleVoting() public {
+        mintBuyAndCreateProposal(alice);
+
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.For);
+
+        vm.expectRevert(GovernanceDAO.ProposalAlreadyVoted.selector);
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.Against);
+    }
+
+    function test_Vote_SuccessOnExactExpiration() public {
+        mintBuyAndCreateProposal(alice);
+
+        /* `vm.warp()` manipulates block.timestamp, modifying simulation's state, not code. */
+        vm.warp(block.timestamp + PERIOD);
+
+        vm.expectEmit(true, true, false, true);
+        emit Voted(1, alice, GovernanceDAO.VoteType.Abstain, 10);
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.Abstain);
+    }
+
+    function test_Vote_RevertsOnExpiration() public {
+        mintBuyAndCreateProposal(alice);
+
+        uint64 expectedEnd = uint64(vm.getBlockTimestamp() + PERIOD);
+        vm.warp(expectedEnd + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.ProposalExpired.selector, expectedEnd));
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.Abstain);
+    }
+
+    function test_Vote_RevertsOnInvalidId() public {
+        mintAndBuy(alice);
+        mintAndBuy(bob);
+
+        dao.closeSales();
+
+        vm.prank(alice);
+        dao.createProposal("Hello", "world!");
+        vm.prank(bob);
+        dao.createProposal("Just", "another proposal");
+
+        uint256 _zeroId = 0;
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.InvalidProposalId.selector, _zeroId));
+        vm.prank(alice);
+        dao.vote(_zeroId, GovernanceDAO.VoteType.For);
+
+        uint256 _idBeyondCount = 3;
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.InvalidProposalId.selector, _idBeyondCount));
+        vm.prank(bob);
+        dao.vote(_idBeyondCount, GovernanceDAO.VoteType.Against);
+    }
+
+    function test_Vote_RevertsOnInvalidVoteType() public {
+        mintBuyAndCreateProposal(alice);
+
+        /* Low-level call encodes _wrongVoteType in the vote function
+        @params = id, VoteType */
+        uint256 _wrongVoteType = 3;
+        bytes memory wrongCalldataVoteType = abi.encodeWithSelector(dao.vote.selector, 1, _wrongVoteType);
+
+        vm.prank(alice);
+        /* Saves call response (success, response) in thwo different variables */
+        (bool wSuccess, bytes memory wResponse) = address(dao).call(wrongCalldataVoteType);
+
+        assertFalse(wSuccess); // `success` is false: contract rejected the encoded invalid VoteType 3
+        assertEq(wResponse.length, 0); // `response` length is 0: rejection carries no response nor error names.
+
+        uint256 _rightVoteType = 2;
+        bytes memory rightCalldataVoteType = abi.encodeWithSelector(dao.vote.selector, 1, _rightVoteType);
+
+        vm.prank(alice);
+        (bool rSuccess,) = address(dao).call(rightCalldataVoteType);
+
+        assertTrue(rSuccess);
     }
 }
