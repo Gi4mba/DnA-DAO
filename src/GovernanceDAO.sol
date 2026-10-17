@@ -38,6 +38,8 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
     uint256 public immutable exchangeRate;
     uint256 public immutable votingPeriod;
     uint256 public immutable tokenUnit;
+    uint256 public constant quorum = 40;
+    uint256 public constant approvingThreshold = 2; // For * 2 > For + Against is the same as "more than 50%"
 
     // State: members & actions
     bool public salesOpen = true;
@@ -181,5 +183,32 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         }
 
         emit Voted(_proposalId, msg.sender, _choice, callerRawShares);
+    }
+
+    function sumAllVotes(uint256 _proposalId) internal view returns (uint256 result) {
+        result = _proposals[_proposalId].forShares + _proposals[_proposalId].againstShares
+            + _proposals[_proposalId].abstainShares;
+    }
+
+    function sumForAndAgainstVotes(uint256 _proposalId) internal view returns (uint256 result) {
+        result = _proposals[_proposalId].forShares + _proposals[_proposalId].againstShares;
+    }
+
+    function status(uint256 _proposalId) public view returns (Status) {
+        if (_proposalId == 0 || _proposalId > proposalCount) {
+            revert InvalidProposalId(_proposalId);
+        }
+
+        // deadline check is intended: validators can shift block.timestamp only by seconds.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp <= _proposals[_proposalId].endTime) {
+            return Status.Pending;
+        } else if (sumAllVotes(_proposalId) * 100 < quorum * totalShares) {
+            return Status.QuorumNotReached;
+        } else if (_proposals[_proposalId].forShares * approvingThreshold <= sumForAndAgainstVotes(_proposalId)) {
+            return Status.Rejected;
+        } else {
+            return Status.Approved;
+        }
     }
 }
