@@ -32,11 +32,16 @@ contract GovernanceDAOTest is Test {
     }
 
     function mintAndBuy(address caller) internal {
-        token.mint(caller, 1e18); /* MockERC20 can mint tokens */
-        vm.prank(caller); /* NEXT call has msg.sender = alice */
-        token.approve(address(dao), 1e18);
+        mintAndBuy(caller, 1e18);
+    }
+
+    /* mintAndBuy Overload: adds amount as param for tests setup */
+    function mintAndBuy(address caller, uint256 amount) internal {
+        token.mint(caller, amount); /* MockERC20 can mint tokens */
+        vm.prank(caller); /* NEXT call has msg.sender = caller */
+        token.approve(address(dao), amount);
         vm.prank(caller);
-        dao.buyShares(1e18);
+        dao.buyShares(amount);
     }
 
     function mintBuyAndCreateProposal(address caller) internal {
@@ -155,6 +160,40 @@ contract GovernanceDAOTest is Test {
         dao.buyShares(1e18);
     }
 
+    function test_CreateProposal_SharesAreInitiallyZero() public {
+        mintBuyAndCreateProposal(alice);
+
+        GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
+
+        assertEq(currentProposal.forShares, 0);
+        assertEq(currentProposal.againstShares, 0);
+        assertEq(currentProposal.abstainShares, 0);
+    }
+
+    function test_CreateProposal_TitleAndDescriptionAreStored() public {
+        mintBuyAndCreateProposal(alice);
+
+        GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
+
+        assertEq(currentProposal.title, "Make");
+        assertEq(currentProposal.description, "coffee");
+    }
+
+    function test_CreateProposal_ProposalDataIsIsolated() public {
+        mintAndBuy(alice);
+        mintBuyAndCreateProposal(bob);
+        vm.prank(bob);
+        dao.createProposal("Another", "proposal");
+
+        GovernanceDAO.Proposal memory firstProposal = dao.viewProposal(1);
+        GovernanceDAO.Proposal memory secondProposal = dao.viewProposal(2);
+
+        assertEq(firstProposal.title, "Make");
+        assertEq(firstProposal.description, "coffee");
+        assertEq(secondProposal.title, "Another");
+        assertEq(secondProposal.description, "proposal");
+    }
+
     function test_CreateProposal_ProposalCreated() public {
         mintAndBuy(alice);
 
@@ -209,6 +248,71 @@ contract GovernanceDAOTest is Test {
         dao.createProposal("Test", "just another proposal");
 
         assertEq(dao.proposalCount(), 2);
+    }
+
+    function test_Vote_SharesAddedInForVoteType() public {
+        mintBuyAndCreateProposal(alice);
+
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.For);
+        GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
+
+        assertEq(currentProposal.forShares, 10);
+        assertEq(currentProposal.againstShares, 0);
+        assertEq(currentProposal.abstainShares, 0);
+    }
+
+    function test_Vote_SharesAddedInAgainstVoteType() public {
+        mintBuyAndCreateProposal(alice);
+
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.Against);
+        GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
+
+        assertEq(currentProposal.forShares, 0);
+        assertEq(currentProposal.againstShares, 10);
+        assertEq(currentProposal.abstainShares, 0);
+    }
+
+    function test_Vote_SharesAddedInAbstainVoteType() public {
+        mintBuyAndCreateProposal(alice);
+
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType.Abstain);
+
+        GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
+
+        assertEq(currentProposal.forShares, 0);
+        assertEq(currentProposal.againstShares, 0);
+        assertEq(currentProposal.abstainShares, 10);
+    }
+
+    function test_Vote_DifferentProposalsCountersAreIsolated() public {
+        mintAndBuy(alice, 1e18);
+        mintAndBuy(bob, 2e18);
+
+        dao.closeSales();
+
+        vm.prank(alice);
+        dao.createProposal("Make", "coffee");
+        vm.prank(bob);
+        dao.createProposal("Another", "proposal");
+
+        vm.prank(alice);
+        dao.vote(2, GovernanceDAO.VoteType.Against);
+
+        vm.prank(bob);
+        dao.vote(1, GovernanceDAO.VoteType.Abstain);
+
+        GovernanceDAO.Proposal memory firstProposal = dao.viewProposal(1);
+        GovernanceDAO.Proposal memory secondProposal = dao.viewProposal(2);
+
+        assertEq(firstProposal.forShares, 0);
+        assertEq(firstProposal.againstShares, 0);
+        assertEq(firstProposal.abstainShares, 20);
+        assertEq(secondProposal.forShares, 0);
+        assertEq(secondProposal.againstShares, 10);
+        assertEq(secondProposal.abstainShares, 0);
     }
 
     function test_Vote_Success() public {
@@ -288,6 +392,16 @@ contract GovernanceDAOTest is Test {
         dao.vote(_idBeyondCount, GovernanceDAO.VoteType.Against);
     }
 
+    /* Pins the order of checks: no shares AND invalid id must revert with UserMustBeShareholder */
+    function test_Vote_ZeroSharesIsCheckedBeforeInvalidId() public {
+        mintBuyAndCreateProposal(bob);
+
+        uint256 _idBeyondCount = 2;
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.UserMustBeShareholder.selector, 0));
+        vm.prank(alice);
+        dao.vote(_idBeyondCount, GovernanceDAO.VoteType.For);
+    }
+
     function test_Vote_RevertsOnInvalidVoteType() public {
         mintBuyAndCreateProposal(alice);
 
@@ -300,7 +414,7 @@ contract GovernanceDAOTest is Test {
         /* Saves call response (success, response) in thwo different variables */
         (bool wSuccess, bytes memory wResponse) = address(dao).call(wrongCalldataVoteType);
 
-        assertFalse(wSuccess); // `success` is false: contract rejected the encoded invalid VoteType 3
+        assertFalse(wSuccess); // `success` is false: contract rejected the invalid encoded VoteType 3
         assertEq(wResponse.length, 0); // `response` length is 0: rejection carries no response nor error names.
 
         uint256 _rightVoteType = 2;
@@ -346,17 +460,8 @@ contract GovernanceDAOTest is Test {
 
     /* For 40 shares, Bob (60) does not vote. Quorum is exactly 40% */
     function test_Status_Approved() public {
-        token.mint(alice, 4e18);
-        vm.prank(alice);
-        token.approve(address(dao), 4e18);
-        vm.prank(alice);
-        dao.buyShares(4e18);
-
-        token.mint(bob, 6e18);
-        vm.prank(bob);
-        token.approve(address(dao), 6e18);
-        vm.prank(bob);
-        dao.buyShares(6e18);
+        mintAndBuy(alice, 4e18);
+        mintAndBuy(bob, 6e18);
 
         dao.closeSales();
 
@@ -377,17 +482,9 @@ contract GovernanceDAOTest is Test {
     function test_Status_ApprovedWithAbstained() public {
         mintAndBuy(alice);
 
-        token.mint(bob, 1.1e18);
-        vm.prank(bob);
-        token.approve(address(dao), 1.1e18);
-        vm.prank(bob);
-        dao.buyShares(1.1e18);
+        mintAndBuy(bob, 1.1e18);
 
-        token.mint(joe, 3e17);
-        vm.prank(joe);
-        token.approve(address(dao), 3e17);
-        vm.prank(joe);
-        dao.buyShares(3e17);
+        mintAndBuy(joe, 3e17);
 
         dao.closeSales();
 
@@ -429,11 +526,7 @@ contract GovernanceDAOTest is Test {
 
     /* 11 For vs 10 Against: one share above the tie, strict majority of For + Against */
     function test_Status_ApprovedByOneShare() public {
-        token.mint(alice, 1.1e18);
-        vm.prank(alice);
-        token.approve(address(dao), 1.1e18);
-        vm.prank(alice);
-        dao.buyShares(1.1e18);
+        mintAndBuy(alice, 1.1e18);
 
         mintBuyAndCreateProposal(bob);
 
@@ -468,17 +561,8 @@ contract GovernanceDAOTest is Test {
 
     /* Quorum boundary, below side: 39%, just under 40% threshold. Inclusive side (40%) is covered by test_Status_Approved */
     function test_Status_QuorumNotReached() public {
-        token.mint(alice, 3.9e18);
-        vm.prank(alice);
-        token.approve(address(dao), 3.9e18);
-        vm.prank(alice);
-        dao.buyShares(3.9e18);
-
-        token.mint(bob, 6.1e18);
-        vm.prank(bob);
-        token.approve(address(dao), 6.1e18);
-        vm.prank(bob);
-        dao.buyShares(6.1e18);
+        mintAndBuy(alice, 3.9e18);
+        mintAndBuy(bob, 6.1e18);
 
         dao.closeSales();
 
@@ -498,17 +582,8 @@ contract GovernanceDAOTest is Test {
     /* Quorum boundary, below side: totalShares is 7. 2 shares (28.6%) must not reach quorum.
         Integer division would round threshold down to 2 letting them reach quorum */
     function test_Status_QuorumNotReachedWhenThresholdHasRemainder() public {
-        token.mint(alice, 2e17);
-        vm.prank(alice);
-        token.approve(address(dao), 2e17);
-        vm.prank(alice);
-        dao.buyShares(2e17);
-
-        token.mint(bob, 5e17);
-        vm.prank(bob);
-        token.approve(address(dao), 5e17);
-        vm.prank(bob);
-        dao.buyShares(5e17);
+        mintAndBuy(alice, 2e17);
+        mintAndBuy(bob, 5e17);
 
         dao.closeSales();
 
@@ -528,17 +603,8 @@ contract GovernanceDAOTest is Test {
     /* Quorum boundary, above side: totalShares is 7. 3 shares (42.9%) is the smallest
         integer amount reaching quorum */
     function test_Status_QuorumReachedWhenThresholdHasRemainder() public {
-        token.mint(alice, 3e17);
-        vm.prank(alice);
-        token.approve(address(dao), 3e17);
-        vm.prank(alice);
-        dao.buyShares(3e17);
-
-        token.mint(bob, 4e17);
-        vm.prank(bob);
-        token.approve(address(dao), 4e17);
-        vm.prank(bob);
-        dao.buyShares(4e17);
+        mintAndBuy(alice, 3e17);
+        mintAndBuy(bob, 4e17);
 
         dao.closeSales();
 
@@ -553,5 +619,109 @@ contract GovernanceDAOTest is Test {
 
         GovernanceDAO.Status result = dao.status(1);
         assertEq(uint256(result), uint256(GovernanceDAO.Status.Approved));
+    }
+
+    function test_ViewProposal_RevertsOnInvalidId() public {
+        mintAndBuy(alice);
+        mintAndBuy(bob);
+
+        dao.closeSales();
+
+        vm.prank(alice);
+        dao.createProposal("Hello", "world!");
+        vm.prank(bob);
+        dao.createProposal("Just", "another proposal");
+
+        uint256 _zeroId = 0;
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.InvalidProposalId.selector, _zeroId));
+        dao.viewProposal(_zeroId);
+
+        uint256 _idBeyondCount = 3;
+        vm.expectRevert(abi.encodeWithSelector(GovernanceDAO.InvalidProposalId.selector, _idBeyondCount));
+        dao.viewProposal(_idBeyondCount);
+
+        GovernanceDAO.Proposal memory lastProposal = dao.viewProposal(2);
+        assertEq(lastProposal.title, "Just");
+    }
+
+    function test_ContractWorkflowIsValid() public {
+        mintAndBuy(alice, 1.2e18);
+        mintAndBuy(bob, 1.4e18);
+        mintAndBuy(joe, 2.6e18);
+
+        dao.closeSales();
+
+        vm.prank(joe);
+        dao.createProposal("Modify exchange rate", "Proposal for changing the exchange rate to 20");
+
+        vm.prank(bob);
+        dao.vote(1, GovernanceDAO.VoteType.Against);
+        vm.prank(joe);
+        dao.vote(1, GovernanceDAO.VoteType.For);
+
+        GovernanceDAO.Status firstResult = dao.status(1);
+        assertEq(uint256(firstResult), uint256(GovernanceDAO.Status.Pending));
+
+        uint64 expectedEnd = uint64(vm.getBlockTimestamp() + PERIOD);
+        vm.warp(expectedEnd + 1);
+
+        GovernanceDAO.Status secondResult = dao.status(1);
+        assertEq(uint256(secondResult), uint256(GovernanceDAO.Status.Approved));
+
+        GovernanceDAO.Proposal memory lastProposal = dao.viewProposal(1);
+        assertEq(lastProposal.forShares, 26);
+        assertEq(lastProposal.againstShares, 14);
+        assertEq(lastProposal.abstainShares, 0);
+    }
+
+    function testFuzz_TotalShares(uint256 aliceAmount, uint256 bobAmount, uint256 joeAmount) public {
+        aliceAmount = bound(aliceAmount, 1e17, 1e19);
+        mintAndBuy(alice, aliceAmount);
+
+        bobAmount = bound(bobAmount, 1e17, 1e19);
+        mintAndBuy(bob, bobAmount);
+
+        joeAmount = bound(joeAmount, 1e17, 1e19);
+        mintAndBuy(joe, joeAmount);
+
+        uint256 sum = dao.shares(alice) + dao.shares(bob) + dao.shares(joe);
+        assertEq(sum, dao.totalShares());
+    }
+
+    function testFuzz_Votes(
+        uint256 aliceAmount,
+        uint256 bobAmount,
+        uint256 joeAmount,
+        uint256 aliceVote,
+        uint256 bobVote,
+        uint256 joeVote
+    ) public {
+        aliceAmount = bound(aliceAmount, 1e17, 1e19);
+        mintAndBuy(alice, aliceAmount);
+
+        bobAmount = bound(bobAmount, 1e17, 1e19);
+        mintAndBuy(bob, bobAmount);
+
+        joeAmount = bound(joeAmount, 1e17, 1e19);
+        mintAndBuy(joe, joeAmount);
+
+        dao.closeSales();
+
+        vm.prank(alice);
+        dao.createProposal("Make", "Coffee");
+
+        aliceVote = bound(aliceVote, 0, 2);
+        vm.prank(alice);
+        dao.vote(1, GovernanceDAO.VoteType(aliceVote));
+        bobVote = bound(bobVote, 0, 2);
+        vm.prank(bob);
+        dao.vote(1, GovernanceDAO.VoteType(bobVote));
+        joeVote = bound(joeVote, 0, 2);
+        vm.prank(joe);
+        dao.vote(1, GovernanceDAO.VoteType(joeVote));
+
+        GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
+        uint256 sum = currentProposal.forShares + currentProposal.againstShares + currentProposal.abstainShares;
+        assertEq(sum, dao.totalShares());
     }
 }

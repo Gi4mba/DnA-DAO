@@ -72,6 +72,13 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
     );
     event Voted(uint256 indexed id, address indexed voter, VoteType choice, uint256 weight);
 
+    modifier onlyValidId(uint256 _proposalId) {
+        if (_proposalId == 0 || _proposalId > proposalCount) {
+            revert InvalidProposalId(_proposalId);
+        }
+        _;
+    }
+
     constructor(address _token, uint256 _exchangeRate, uint256 _votingPeriod) Ownable(msg.sender) {
         if (_token == address(0) || _exchangeRate == 0 || _votingPeriod == 0) {
             revert InvalidConstructorArguments(_token, _exchangeRate, _votingPeriod);
@@ -162,6 +169,7 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         if (_proposalId == 0 || _proposalId > proposalCount) {
             revert InvalidProposalId(_proposalId);
         }
+
         // deadline check is intended: validators can shift block.timestamp only by seconds.
         // forge-lint: disable-next-line(block-timestamp)
         if ((block.timestamp) > _proposals[_proposalId].endTime) {
@@ -185,30 +193,36 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         emit Voted(_proposalId, msg.sender, _choice, callerRawShares);
     }
 
-    function sumAllVotes(uint256 _proposalId) internal view returns (uint256 result) {
-        result = _proposals[_proposalId].forShares + _proposals[_proposalId].againstShares
-            + _proposals[_proposalId].abstainShares;
+    function sumAllVotes(Proposal storage proposalRef) internal view returns (uint256 result) {
+        result = proposalRef.forShares + proposalRef.againstShares + proposalRef.abstainShares;
     }
 
-    function sumForAndAgainstVotes(uint256 _proposalId) internal view returns (uint256 result) {
-        result = _proposals[_proposalId].forShares + _proposals[_proposalId].againstShares;
+    function sumForAndAgainstVotes(Proposal storage proposalRef) internal view returns (uint256 result) {
+        result = proposalRef.forShares + proposalRef.againstShares;
     }
 
-    function status(uint256 _proposalId) public view returns (Status) {
-        if (_proposalId == 0 || _proposalId > proposalCount) {
-            revert InvalidProposalId(_proposalId);
-        }
+    function status(uint256 _proposalId) public view onlyValidId(_proposalId) returns (Status) {
+        Proposal storage proposalRef = _proposals[_proposalId];
 
         // deadline check is intended: validators can shift block.timestamp only by seconds.
         // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp <= _proposals[_proposalId].endTime) {
+        if (block.timestamp <= proposalRef.endTime) {
             return Status.Pending;
-        } else if (sumAllVotes(_proposalId) * 100 < quorum * totalShares) {
+        } else if (sumAllVotes(proposalRef) * 100 < quorum * totalShares) {
             return Status.QuorumNotReached;
-        } else if (_proposals[_proposalId].forShares * approvingThreshold <= sumForAndAgainstVotes(_proposalId)) {
+        } else if (proposalRef.forShares * approvingThreshold <= sumForAndAgainstVotes(proposalRef)) {
             return Status.Rejected;
         } else {
             return Status.Approved;
         }
+    }
+
+    function viewProposal(uint256 _proposalId)
+        external
+        view
+        onlyValidId(_proposalId)
+        returns (Proposal memory proposal)
+    {
+        proposal = _proposals[_proposalId];
     }
 }
