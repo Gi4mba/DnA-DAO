@@ -7,6 +7,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+/// @title GovernanceDAO
+/// @notice Direct-democracy governance: members buy shares with an ERC-20 token, then vote on proposals.
+/// @dev Two separate phases. While sales are open only `buyShares` works; after `closeSales` only proposals
+/// and votes do, so `totalShares` is fixed during voting and no snapshot is needed. Proposals are a record
+/// (text, aggregated votes, outcome): nothing is executed on-chain.
 contract GovernanceDAO is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20Metadata;
     using SafeCast for uint256;
@@ -79,6 +84,9 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         _;
     }
 
+    /// @param _token ERC-20 token used to pay for shares.
+    /// @param _exchangeRate Shares received per whole token (`10**decimals` base units).
+    /// @param _votingPeriod Voting duration in seconds, the same for every proposal.
     constructor(address _token, uint256 _exchangeRate, uint256 _votingPeriod) Ownable(msg.sender) {
         if (_token == address(0) || _exchangeRate == 0 || _votingPeriod == 0) {
             revert InvalidConstructorArguments(_token, _exchangeRate, _votingPeriod);
@@ -90,6 +98,10 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         tokenUnit = 10 ** IERC20Metadata(_token).decimals();
     }
 
+    /// @notice Buys whole shares with the DAO token while sales are open.
+    /// @dev Shares are rounded down; only the cost of the shares actually bought is pulled (rounded up),
+    /// the remainder stays with the caller. Requires prior token approval. Reverts if the amount buys 0 shares.
+    /// @param _amount Maximum token amount, in base units, the caller is willing to spend.
     function buyShares(uint256 _amount) external nonReentrant {
         uint256 newShares = _amount * exchangeRate / tokenUnit;
         if (salesOpen == false) {
@@ -109,6 +121,8 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         emit SharesPurchased(msg.sender, newShares, cost);
     }
 
+    /// @notice Ends the sales phase and opens the proposal and voting phase.
+    /// @dev Owner only and irreversible. Reverts if sales are already closed.
     function closeSales() public onlyOwner {
         if (salesOpen == false) {
             revert SaleIsAlreadyClosed();
@@ -126,6 +140,10 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         }
     }
 
+    /// @notice Creates a proposal; voting stays open for `votingPeriod` seconds.
+    /// @dev Only after `closeSales`, only for shareholders. Ids start from 1. Title and description must be non-empty.
+    /// @param _title Short title of the proposal.
+    /// @param _description Full text of the proposal.
     function createProposal(string calldata _title, string calldata _description) external {
         if (salesOpen != false) {
             revert SalesStageNotEnded();
@@ -161,6 +179,11 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         emit ProposalCreated(proposalCount, msg.sender, _endTime, _title, _description);
     }
 
+    /// @notice Votes on a proposal with all the shares owned by the caller.
+    /// @dev One vote per address per proposal, not changeable. Voting is allowed up to and including `endTime`.
+    /// Checks run in this order: shareholder, valid id, not expired, not already voted.
+    /// @param _proposalId Id of the proposal.
+    /// @param _choice For, Against or Abstain.
     function vote(uint256 _proposalId, VoteType _choice) external {
         /* salesOpen is set to false since proposals are being created and it's irreversible. Check not required */
         if (shares[msg.sender] == 0) {
@@ -201,6 +224,11 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         result = proposalRef.forShares + proposalRef.againstShares;
     }
 
+    /// @notice Returns the state of a proposal: Pending, Approved, Rejected or QuorumNotReached.
+    /// @dev Computed on demand, not stored. Pending until `endTime` included. Quorum: votes cast (for, against,
+    /// abstain) must be at least 40% of `totalShares`. Approved only if For is strictly more than 50% of
+    /// For + Against: a tie, or everyone abstaining with quorum reached, is Rejected. Integer math only.
+    /// @param _proposalId Id of the proposal.
     function status(uint256 _proposalId) public view onlyValidId(_proposalId) returns (Status) {
         Proposal storage proposalRef = _proposals[_proposalId];
 
@@ -217,6 +245,8 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         }
     }
 
+    /// @notice Returns the full record of a proposal: proposer, end time, aggregated votes, title, description.
+    /// @param _proposalId Id of the proposal.
     function viewProposal(uint256 _proposalId)
         external
         view
