@@ -68,6 +68,9 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
     error InvalidProposalId(uint256 _proposalId);
     error ProposalAlreadyVoted();
     error ProposalExpired(uint64 endTime);
+    error WithdrawalNotAllowedDuringSales();
+    error RecipientMustBeAValidAddress();
+    error AmountMustBeMoreThanZero();
 
     // Events
     event SharesPurchased(address indexed buyer, uint256 sharesBought, uint256 cost);
@@ -76,6 +79,7 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         uint256 indexed id, address indexed proposer, uint64 endTime, string title, string description
     );
     event Voted(uint256 indexed id, address indexed voter, VoteType choice, uint256 weight);
+    event WithdrawSuccessful(address indexed to, uint256 amount);
 
     modifier onlyValidId(uint256 _proposalId) {
         if (_proposalId == 0 || _proposalId > proposalCount) {
@@ -254,5 +258,20 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         returns (Proposal memory proposal)
     {
         proposal = _proposals[_proposalId];
+    }
+
+    function withdraw(address _to, uint256 _amount) public onlyOwner {
+        if (salesOpen) {
+            revert WithdrawalNotAllowedDuringSales();
+        }
+        if (_to == address(0)) {
+            revert RecipientMustBeAValidAddress();
+        } else if (_amount == 0) {
+            revert AmountMustBeMoreThanZero();
+        }
+
+        token.safeTransfer(_to, _amount);
+
+        emit WithdrawSuccessful(_to, _amount);
     }
 }

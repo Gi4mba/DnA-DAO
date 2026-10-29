@@ -21,6 +21,7 @@ contract GovernanceDAOTest is Test {
         uint256 indexed id, address indexed proposer, uint64 endTime, string title, string description
     );
     event Voted(uint256 indexed id, address indexed voter, GovernanceDAO.VoteType choice, uint256 weight);
+    event WithdrawSuccessful(address indexed to, uint256 amount);
 
     /* SetUp() starts from a fresh new contract */
     function setUp() public {
@@ -214,7 +215,7 @@ contract GovernanceDAOTest is Test {
         assertEq(dao.proposalCount(), 1);
     }
 
-    function test_CreateProposal_SalesNotClosed() public {
+    function test_CreateProposal_RevertsOnSalesNotClosed() public {
         mintAndBuy(alice);
 
         vm.expectRevert(GovernanceDAO.SalesStageNotEnded.selector);
@@ -723,5 +724,74 @@ contract GovernanceDAOTest is Test {
         GovernanceDAO.Proposal memory currentProposal = dao.viewProposal(1);
         uint256 sum = currentProposal.forShares + currentProposal.againstShares + currentProposal.abstainShares;
         assertEq(sum, dao.totalShares());
+    }
+
+    function test_Withdraw_TransferExecutedAndBalanceIsDeducted() public {
+        mintAndBuy(alice);
+
+        dao.closeSales();
+        uint256 balanceBeforeWithdraw = token.balanceOf(address(dao));
+
+        dao.withdraw(bob, 1e17);
+        uint256 balanceAfterWithdraw = token.balanceOf(address(dao));
+
+        uint256 balanceDelta = balanceBeforeWithdraw - balanceAfterWithdraw;
+        assertEq(token.balanceOf(bob), 1e17);
+        assertEq(balanceDelta, 1e17);
+    }
+
+    function test_Withdraw_UnauthorizedAccount() public {
+        dao.closeSales();
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.prank(alice);
+        dao.withdraw(bob, 2e17);
+    }
+
+    function test_Withdraw_RevertsOnSalesNotClosed() public {
+        vm.expectRevert(GovernanceDAO.WithdrawalNotAllowedDuringSales.selector);
+        dao.withdraw(joe, 1e17);
+    }
+
+    function test_Withdraw_RevertsOnZeroAddress() public {
+        dao.closeSales();
+        vm.expectRevert(GovernanceDAO.RecipientMustBeAValidAddress.selector);
+        dao.withdraw(address(0), 1e18);
+    }
+
+    function test_Withdraw_RevertsOnZeroAmount() public {
+        dao.closeSales();
+        vm.expectRevert(GovernanceDAO.AmountMustBeMoreThanZero.selector);
+        dao.withdraw(bob, 0);
+    }
+
+    function test_Withdraw_SharesUnchanged() public {
+        mintAndBuy(alice);
+
+        dao.closeSales();
+
+        uint256 ownerSharesBeforeWithdraw = dao.shares(dao.owner());
+        uint256 sharesBeforeWithdraw = dao.shares(alice);
+        uint256 totalSharesBeforeWithdraw = dao.totalShares();
+
+        dao.withdraw(dao.owner(), 2e17);
+
+        uint256 ownerSharesAfterWithdraw = dao.shares(dao.owner());
+        uint256 sharesAfterWithdraw = dao.shares(alice);
+        uint256 totalSharesAfterWithdraw = dao.totalShares();
+
+        assertEq(ownerSharesBeforeWithdraw, ownerSharesAfterWithdraw);
+        assertEq(sharesBeforeWithdraw, sharesAfterWithdraw);
+        assertEq(totalSharesBeforeWithdraw, totalSharesAfterWithdraw);
+    }
+
+    function test_Withdraw_EmitsEvent() public {
+        mintAndBuy(alice);
+
+        dao.closeSales();
+
+        vm.expectEmit(true, false, false, true, address(dao));
+        emit WithdrawSuccessful(bob, 1e17);
+
+        dao.withdraw(bob, 1e17);
     }
 }
