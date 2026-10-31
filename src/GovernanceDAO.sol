@@ -58,6 +58,7 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
 
     // Errors
     error InvalidConstructorArguments(address _token, uint256 _exchangeRate, uint256 _votingPeriod);
+    error RenounceOwnershipIsDisabled();
     error AmountTooLow(uint256 _amount);
     error SaleIsClosed();
     error SaleIsAlreadyClosed();
@@ -100,6 +101,10 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         exchangeRate = _exchangeRate;
         votingPeriod = _votingPeriod;
         tokenUnit = 10 ** IERC20Metadata(_token).decimals();
+    }
+
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceOwnershipIsDisabled();
     }
 
     /// @notice Buys whole shares with the DAO token while sales are open.

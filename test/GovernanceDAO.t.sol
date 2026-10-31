@@ -794,4 +794,15 @@ contract GovernanceDAOTest is Test {
 
         dao.withdraw(bob, 1e17);
     }
+
+    function test_RenounceOwnership_Reverts() public {
+        vm.expectRevert(GovernanceDAO.RenounceOwnershipIsDisabled.selector);
+        dao.renounceOwnership();
+    }
+
+    function test_RenounceOwnership_UnauthorizedAccount() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.prank(alice);
+        dao.renounceOwnership();
+    }
 }
