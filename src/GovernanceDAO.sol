@@ -103,6 +103,9 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         tokenUnit = 10 ** IERC20Metadata(_token).decimals();
     }
 
+    /// @notice Renouncing ownership is disabled: the call always reverts.
+    /// @dev Keeps an owner in place, so the treasury stays reachable through `withdraw`. Calls from other
+    /// addresses revert earlier, with the access error of `Ownable`.
     function renounceOwnership() public view override onlyOwner {
         revert RenounceOwnershipIsDisabled();
     }
@@ -265,6 +268,11 @@ contract GovernanceDAO is Ownable, ReentrancyGuard {
         proposal = _proposals[_proposalId];
     }
 
+    /// @notice Sends collected tokens from the contract to an address, once sales are closed.
+    /// @dev Owner only, and only after `closeSales`. Zero recipient and zero amount revert with distinct errors.
+    /// Shares and `totalShares` do not change. An amount above the contract balance is rejected by the token.
+    /// @param _to Address that receives the tokens.
+    /// @param _amount Amount of tokens, in base units, to send.
     function withdraw(address _to, uint256 _amount) public onlyOwner {
         if (salesOpen) {
             revert WithdrawalNotAllowedDuringSales();

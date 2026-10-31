@@ -36,8 +36,11 @@ Decisions are only a record (text, aggregated votes, outcome): the contract exec
 | `vote(id, choice)` | shareholders, before the deadline | votes with all owned shares |
 | `status(id)` | anyone | outcome of the proposal |
 | `viewProposal(id)` | anyone | full record of the proposal |
+| `withdraw(to, amount)` | owner, after closing | withdraws collected tokens to an address |
 
 The constructor takes the token address, the exchange rate and the voting period in seconds. The owner is the deployer. Each function is documented in the natspec of `src/GovernanceDAO.sol`.
+
+**Owner.** The owner can buy shares from several addresses, so a majority held by the owner is possible: the contract cannot prevent it. This is a declared trust assumption, not an enforced limit. After sales close, the owner can withdraw the collected tokens with `withdraw`. Ownership cannot be renounced: the call always reverts, so the treasury cannot be left without an owner by mistake. Transferring ownership to an address without a key would still make the treasury unreachable.
 
 ### Usage
 
@@ -88,8 +91,11 @@ Le decisioni sono solo un registro (testo, voti aggregati, esito): il contratto 
 | `vote(id, choice)` | azionisti, entro la scadenza | vota con tutte le azioni possedute |
 | `status(id)` | chiunque | esito della proposta |
 | `viewProposal(id)` | chiunque | registro completo della proposta |
+| `withdraw(to, amount)` | owner, dopo la chiusura | preleva i token incassati verso un indirizzo |
 
 Il costruttore riceve l'indirizzo del token, il tasso di cambio e la durata del voto in secondi. L'owner è chi fa il deploy. Il dettaglio di ogni funzione è nel natspec in `src/GovernanceDAO.sol`.
+
+**Owner.** L'owner può comprare azioni da più indirizzi: una maggioranza in mano all'owner è possibile, e il contratto non la impedisce. È un'assunzione di fiducia dichiarata, non un limite imposto. Dopo la chiusura della vendita, l'owner può prelevare i token incassati con `withdraw`. La rinuncia all'ownership è disattivata: la chiamata va sempre in revert, così la tesoreria non resta senza owner per errore. Passare l'ownership a un indirizzo senza chiave renderebbe comunque la tesoreria irraggiungibile.
 
 ### Uso
 
